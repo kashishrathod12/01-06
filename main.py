@@ -17,6 +17,8 @@ DEFAULTS = {
     "api_key": "default-secret-000",
 }
 
+ALLOWED_KEYS = set(DEFAULTS)
+
 app = FastAPI()
 
 app.add_middleware(
@@ -42,7 +44,8 @@ def normalize_config(layer):
         if key == "num_workers":
             key = "workers"
 
-        result[key] = value
+        if key in ALLOWED_KEYS:
+            result[key] = value
 
     return result
 
@@ -76,11 +79,12 @@ def effective_config(
             yaml_config = yaml.safe_load(file) or {}
         config.update(normalize_config(yaml_config))
 
-    # Layer 3: .env file, including NUM_WORKERS alias
-    env_file = dotenv_values(BASE_DIR / ".env")
+    # Layer 3: .env file
+    env_path = BASE_DIR / ".env"
+    env_file = dotenv_values(env_path) if env_path.exists() else {}
     config.update(normalize_config(env_file))
 
-    # Layer 4: actual OS environment variables
+    # Layer 4: OS environment variables
     os_config = {
         key: value
         for key, value in os.environ.items()
@@ -88,7 +92,7 @@ def effective_config(
     }
     config.update(normalize_config(os_config))
 
-    # Highest precedence: CLI-style query overrides
+    # Layer 5: CLI query overrides
     for entry in set_values:
         if "=" not in entry:
             continue
@@ -102,16 +106,14 @@ def effective_config(
         if key == "num_workers":
             key = "workers"
 
-        config[key] = value
+        if key in ALLOWED_KEYS:
+            config[key] = value
 
-    # Apply types after all layers have been merged
     result = {
         key: coerce_value(key, value)
         for key, value in config.items()
     }
 
-    # Never expose the actual API key
-    if "api_key" in result:
-        result["api_key"] = "****"
+    result["api_key"] = "****"
 
     return result
